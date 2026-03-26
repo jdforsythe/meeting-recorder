@@ -51,16 +51,16 @@ struct MenuBarView: View {
     }
 
     private var sourcePickerView: some View {
-        Picker("Source", selection: $appState.currentSource) {
-            Text("Microphone").tag("mic")
-            Text("System Audio").tag("system")
-            Text("Both").tag("both")
+        Picker("Source", selection: $appState.selectedSource) {
+            ForEach(AudioSource.allCases) { source in
+                Text(source.displayName).tag(source)
+            }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
     }
 
-    private func lastRecordingInfoView(info: RecordingInfo) -> some View {
+    private func lastRecordingInfoView(info: AppState.LastRecordingInfo) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider()
 
@@ -80,7 +80,7 @@ struct MenuBarView: View {
             HStack {
                 Image(systemName: "timer")
                     .foregroundColor(.secondary)
-                Text(Self.formatDuration(info.duration))
+                Text(Self.formatDuration(info.duration ?? 0))
             }
             .font(.caption)
 
@@ -169,7 +169,7 @@ struct MenuBarView: View {
 
     private func startRecording() {
         let output = appState.currentOutputPath ?? defaultOutputPath()
-        appState.startRecording(source: appState.currentSource, output: output)
+        appState.startRecording(source: appState.selectedSource, outputPath: output)
     }
 
     private func stopRecording() {
@@ -179,12 +179,7 @@ struct MenuBarView: View {
     // MARK: - Helpers
 
     private var sourceDisplayName: String {
-        switch appState.currentSource {
-        case "mic": return "Microphone"
-        case "system": return "System Audio"
-        case "both": return "Both"
-        default: return appState.currentSource
-        }
+        appState.selectedSource.displayName
     }
 
     private func defaultOutputPath() -> String {

@@ -18,7 +18,7 @@ struct MeetingRecorderApp: App {
                     .symbolRenderingMode(.multicolor)
                     .symbolEffect(.pulse)
             case .processing(_):
-                BrickAnimationView()
+                BrickAnimationMenuBarIcon()
             case .error(_):
                 Image(systemName: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)

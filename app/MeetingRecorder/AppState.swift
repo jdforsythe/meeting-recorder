@@ -35,6 +35,18 @@ class AppState: ObservableObject {
     @Published var recordingStartTime: Date?
     @Published var lastRecordingInfo: LastRecordingInfo?
 
+    /// Computed elapsed time since recording started (for UI display).
+    var elapsedTime: TimeInterval {
+        guard let start = recordingStartTime else { return 0 }
+        return Date().timeIntervalSince(start)
+    }
+
+    /// Computed current processing step (extracted from state enum).
+    var currentStep: String {
+        if case .processing(let step) = state { return step }
+        return ""
+    }
+
     private var pipelineRunner: PipelineRunner
     private var configManager: ConfigManager
     private var cancellables = Set<AnyCancellable>()
