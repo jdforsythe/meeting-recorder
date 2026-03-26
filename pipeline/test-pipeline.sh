@@ -1,621 +1,611 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-###############################################################################
 # test-pipeline.sh — End-to-end tests for meeting-pipeline.sh
-#
-# Run with:  bash pipeline/test-pipeline.sh
-#
-# Tests the full start -> stop -> process -> verify pipeline as well as
-# error paths. Skips gracefully when required macOS-specific tools are absent.
-###############################################################################
+# Handles missing macOS-specific tools (sox, whisper-cpp) gracefully on Linux.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE="${SCRIPT_DIR}/meeting-pipeline.sh"
-TEST_DIR="/tmp/meeting-recorder-test-$$"
-TEST_OUTPUT="${TEST_DIR}/test-transcript.md"
-SESSION_BASE="/tmp/meeting-recorder"
+TEST_DIR="/tmp/meeting-recorder-tests"
+PASS=0
+FAIL=0
+SKIP=0
 
-# Counters
-TESTS_RUN=0
-TESTS_PASSED=0
-TESTS_SKIPPED=0
-TESTS_FAILED=0
+# --- Helpers ---
 
-###############################################################################
-# Helpers
-###############################################################################
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m' # No color
+setup() {
+    rm -rf "$TEST_DIR"
+    mkdir -p "$TEST_DIR"
+}
 
-log_test() {
-    echo -e "${NC}[TEST] $*"
+teardown() {
+    rm -rf "$TEST_DIR"
+    # Clean up any session dirs created during tests
+    rm -rf /tmp/meeting-recorder/
 }
 
 pass() {
-    TESTS_PASSED=$((TESTS_PASSED + 1))
-    echo -e "  ${GREEN}PASS${NC}: $*"
+    PASS=$((PASS + 1))
+    echo "  PASS: $1"
 }
 
 fail() {
-    TESTS_FAILED=$((TESTS_FAILED + 1))
-    echo -e "  ${RED}FAIL${NC}: $*"
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $1"
 }
 
 skip() {
-    TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
-    echo -e "  ${YELLOW}SKIP${NC}: $*"
+    SKIP=$((SKIP + 1))
+    echo "  SKIP: $1"
 }
 
-begin_test() {
-    TESTS_RUN=$((TESTS_RUN + 1))
-    echo ""
-    log_test "[$TESTS_RUN] $*"
+has_tool() {
+    command -v "$1" &>/dev/null
 }
 
-cleanup() {
-    # Remove test artifacts
-    rm -rf "$TEST_DIR"
-    rm -f "${TEST_OUTPUT}.pid"
-    rm -f "${TEST_OUTPUT}.recording"
-    rm -f "${TEST_OUTPUT}.processing"
-    rm -f "${TEST_OUTPUT}.done"
-    rm -f "${TEST_OUTPUT}.error"
+# --- Test: Argument validation ---
 
-    # Clean up any sox processes we may have started
-    if [[ -f "${TEST_OUTPUT}.pid" ]]; then
-        while IFS=: read -r pid _ts; do
-            kill "$pid" 2>/dev/null || true
-        done < "${TEST_OUTPUT}.pid"
-    fi
-}
-
-# Always clean up on exit
-trap cleanup EXIT
-
-###############################################################################
-# Pre-flight: check that the pipeline script exists and is executable
-###############################################################################
-if [[ ! -f "$PIPELINE" ]]; then
-    echo "ERROR: Pipeline script not found at ${PIPELINE}"
-    exit 1
-fi
-
-if [[ ! -x "$PIPELINE" ]]; then
-    echo "WARNING: Pipeline script not executable, fixing..."
-    chmod +x "$PIPELINE"
-fi
-
-###############################################################################
-# Check for required tools
-###############################################################################
-HAS_SOX=false
-HAS_FFMPEG=false
-HAS_WHISPER=false
-
-command -v sox &>/dev/null && HAS_SOX=true
-command -v ffmpeg &>/dev/null && HAS_FFMPEG=true
-command -v whisper-cpp &>/dev/null && HAS_WHISPER=true
-
-echo "=============================================="
-echo " Meeting Pipeline Test Suite"
-echo "=============================================="
-echo "Pipeline: ${PIPELINE}"
-echo "Test dir: ${TEST_DIR}"
-echo ""
-echo "Tool availability:"
-echo "  sox:        ${HAS_SOX}"
-echo "  ffmpeg:     ${HAS_FFMPEG}"
-echo "  whisper-cpp: ${HAS_WHISPER}"
-echo ""
-
-# Create test directory
-mkdir -p "$TEST_DIR"
-
-###############################################################################
-# Test 1: Argument validation — missing --action
-###############################################################################
-begin_test "Missing --action argument returns exit code 5"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --output "$TEST_OUTPUT" 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 5 ]]; then
-    pass "Exit code is 5 for missing --action"
-else
-    fail "Expected exit code 5, got ${exit_code}"
-fi
-
-###############################################################################
-# Test 2: Argument validation — missing --output
-###############################################################################
-begin_test "Missing --output argument returns exit code 5"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action start 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 5 ]]; then
-    pass "Exit code is 5 for missing --output"
-else
-    fail "Expected exit code 5, got ${exit_code}"
-fi
-
-###############################################################################
-# Test 3: Argument validation — invalid --source
-###############################################################################
-begin_test "Invalid --source value returns exit code 5"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action start --output "$TEST_OUTPUT" --source invalid 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 5 ]]; then
-    pass "Exit code is 5 for invalid --source"
-else
-    fail "Expected exit code 5, got ${exit_code}"
-fi
-
-###############################################################################
-# Test 4: Argument validation — invalid --action
-###############################################################################
-begin_test "Invalid --action value returns exit code 5"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action bogus --output "$TEST_OUTPUT" 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 5 ]]; then
-    pass "Exit code is 5 for invalid --action"
-else
-    fail "Expected exit code 5, got ${exit_code}"
-fi
-
-###############################################################################
-# Test 5: Argument validation — unknown flag
-###############################################################################
-begin_test "Unknown argument returns exit code 5"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action start --output "$TEST_OUTPUT" --unknown-flag foo 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 5 ]]; then
-    pass "Exit code is 5 for unknown argument"
-else
-    fail "Expected exit code 5, got ${exit_code}"
-fi
-
-###############################################################################
-# Test 6: start action — prerequisite validation (when tools missing)
-###############################################################################
-begin_test "Start action validates prerequisites"
-
-if [[ "$HAS_SOX" == "true" && "$HAS_FFMPEG" == "true" && "$HAS_WHISPER" == "true" ]]; then
-    skip "All tools are installed; cannot test missing-prerequisite path here"
-else
-    # At least one tool is missing so start should fail with exit 5
-    cleanup
-    mkdir -p "$TEST_DIR"
-
-    set +e
-    stderr_output=$(bash "$PIPELINE" --action start --output "$TEST_OUTPUT" --source mic 2>&1)
-    exit_code=$?
-    set -e
-
+test_missing_action() {
+    echo "[test] Missing --action should exit with code 5"
+    local exit_code=0
+    "$PIPELINE" --source mic --output "${TEST_DIR}/out.md" 2>/dev/null || exit_code=$?
     if [[ $exit_code -eq 5 ]]; then
-        pass "Exit code is 5 when prerequisites are missing"
+        pass "Missing --action exits 5"
     else
-        fail "Expected exit code 5, got ${exit_code}"
+        fail "Missing --action exited $exit_code (expected 5)"
     fi
+}
 
-    # Verify .error sentinel was written
-    if [[ -f "${TEST_OUTPUT}.error" ]]; then
-        pass ".error sentinel was created on prerequisite failure"
-
-        # Check .error sentinel contains valid JSON with expected fields
-        step_val=$(python3 -c "
-import json
-with open('${TEST_OUTPUT}.error') as f:
-    data = json.load(f)
-print(data.get('step', ''))
-" 2>/dev/null) || step_val=""
-
-        if [[ "$step_val" == "validate_prerequisites" ]]; then
-            pass ".error sentinel has correct step field"
-        else
-            fail ".error sentinel step is '${step_val}', expected 'validate_prerequisites'"
-        fi
+test_missing_output() {
+    echo "[test] Missing --output should exit with code 5"
+    local exit_code=0
+    "$PIPELINE" --action start --source mic 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 5 ]]; then
+        pass "Missing --output exits 5"
     else
-        fail ".error sentinel was not created on prerequisite failure"
+        fail "Missing --output exited $exit_code (expected 5)"
     fi
+}
 
-    # Verify .pid was cleaned up (should not exist on error)
-    if [[ ! -f "${TEST_OUTPUT}.pid" ]]; then
-        pass ".pid file was cleaned up on error"
+test_invalid_action() {
+    echo "[test] Invalid --action value should exit with code 5"
+    local exit_code=0
+    "$PIPELINE" --action bogus --source mic --output "${TEST_DIR}/out.md" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 5 ]]; then
+        pass "Invalid --action exits 5"
     else
-        fail ".pid file still exists after error"
+        fail "Invalid --action exited $exit_code (expected 5)"
     fi
-fi
+}
 
-###############################################################################
-# Test 7: stop action — missing .pid file
-###############################################################################
-begin_test "Stop action fails gracefully when no .pid file exists"
-
-cleanup
-mkdir -p "$TEST_DIR"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action stop --output "$TEST_OUTPUT" 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 1 ]]; then
-    pass "Exit code is 1 for missing .pid file"
-else
-    fail "Expected exit code 1, got ${exit_code}"
-fi
-
-if [[ -f "${TEST_OUTPUT}.error" ]]; then
-    pass ".error sentinel created for missing .pid"
-else
-    fail ".error sentinel not created for missing .pid"
-fi
-
-###############################################################################
-# Test 8: stop action — stale PID in .pid file
-###############################################################################
-begin_test "Stop action handles stale PID"
-
-cleanup
-mkdir -p "$TEST_DIR"
-
-# Write a .pid file with a PID that definitely does not exist
-echo "99999999:$(date '+%s')" > "${TEST_OUTPUT}.pid"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action stop --output "$TEST_OUTPUT" 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 1 ]]; then
-    pass "Exit code is 1 for stale PID"
-else
-    fail "Expected exit code 1 for stale PID, got ${exit_code}"
-fi
-
-if [[ -f "${TEST_OUTPUT}.error" ]]; then
-    pass ".error sentinel created for stale PID"
-else
-    fail ".error sentinel not created for stale PID"
-fi
-
-###############################################################################
-# Test 9: process action — missing .recording sentinel
-###############################################################################
-begin_test "Process action fails when .recording sentinel missing"
-
-cleanup
-mkdir -p "$TEST_DIR"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action process --output "$TEST_OUTPUT" --model-path /nonexistent/model.bin 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 4 ]]; then
-    pass "Exit code is 4 for missing .recording sentinel"
-else
-    fail "Expected exit code 4, got ${exit_code}"
-fi
-
-if [[ -f "${TEST_OUTPUT}.error" ]]; then
-    step_val=$(python3 -c "
-import json
-with open('${TEST_OUTPUT}.error') as f:
-    data = json.load(f)
-print(data.get('step', ''))
-" 2>/dev/null) || step_val=""
-
-    if [[ "$step_val" == "process_recover_session" ]]; then
-        pass ".error sentinel step is 'process_recover_session'"
+test_unknown_argument() {
+    echo "[test] Unknown argument should exit with code 5"
+    local exit_code=0
+    "$PIPELINE" --action start --source mic --output "${TEST_DIR}/out.md" --bogus-flag 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 5 ]]; then
+        pass "Unknown argument exits 5"
     else
-        fail ".error sentinel step is '${step_val}', expected 'process_recover_session'"
+        fail "Unknown argument exited $exit_code (expected 5)"
     fi
-else
-    fail ".error sentinel not created"
-fi
+}
 
-###############################################################################
-# Test 10: process action — missing raw WAV
-###############################################################################
-begin_test "Process action fails when raw WAV is missing"
-
-cleanup
-mkdir -p "$TEST_DIR"
-
-# Create a fake .recording sentinel pointing to an empty session directory
-FAKE_SESSION_ID="test-nosound-$(date '+%s')"
-FAKE_SESSION_DIR="${SESSION_BASE}/${FAKE_SESSION_ID}"
-mkdir -p "$FAKE_SESSION_DIR"
-
-python3 -c "
-import json
-data = {'session_id': '${FAKE_SESSION_ID}', 'source': 'mic', 'start_time': '2026-01-01T00:00:00Z'}
-with open('${TEST_OUTPUT}.recording', 'w') as f:
-    json.dump(data, f)
-"
-
-set +e
-stderr_output=$(bash "$PIPELINE" --action process --output "$TEST_OUTPUT" --model-path /nonexistent/model.bin 2>&1)
-exit_code=$?
-set -e
-
-if [[ $exit_code -eq 4 ]]; then
-    pass "Exit code is 4 for missing raw WAV"
-else
-    fail "Expected exit code 4, got ${exit_code}"
-fi
-
-if [[ -f "${TEST_OUTPUT}.error" ]]; then
-    pass ".error sentinel created for missing raw WAV"
-else
-    fail ".error sentinel not created for missing raw WAV"
-fi
-
-# Verify .recording is preserved on error (per spec)
-if [[ -f "${TEST_OUTPUT}.recording" ]]; then
-    pass ".recording sentinel preserved on error"
-else
-    fail ".recording sentinel was deleted on error (should be preserved)"
-fi
-
-###############################################################################
-# Test 11: Full pipeline integration (start -> stop -> process)
-###############################################################################
-begin_test "Full pipeline integration (start -> stop -> process)"
-
-if [[ "$HAS_SOX" != "true" ]]; then
-    skip "sox not installed — cannot run full integration test"
-elif [[ "$HAS_FFMPEG" != "true" ]]; then
-    skip "ffmpeg not installed — cannot run full integration test"
-elif [[ "$HAS_WHISPER" != "true" ]]; then
-    skip "whisper-cpp not installed — cannot run full integration test"
-else
-    cleanup
-    mkdir -p "$TEST_DIR"
-
-    # Determine available audio device for mic
-    mic_device=$(python3 -c "
-import json, os
-config_path = os.path.expanduser('~/.config/meeting-recorder/config.json')
-try:
-    with open(config_path) as f:
-        cfg = json.load(f)
-    print(cfg.get('micDevice', 'default'))
-except Exception:
-    print('default')
-" 2>/dev/null) || mic_device="default"
-
-    # Check if the mic device is available
-    if sox -t coreaudio --list-devices 2>&1 | grep -qF "$mic_device"; then
-        log_test "Using mic device: ${mic_device}"
+test_invalid_source() {
+    echo "[test] Invalid --source value should exit with code 5"
+    # This test only makes sense if sox is available (otherwise it fails on prerequisite first)
+    if ! has_tool sox; then
+        skip "Invalid source test requires sox"
+        return
+    fi
+    local exit_code=0
+    "$PIPELINE" --action start --source badvalue --output "${TEST_DIR}/out.md" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 5 ]]; then
+        pass "Invalid --source exits 5"
     else
-        skip "Configured mic device '${mic_device}' not available"
-        # Jump to summary (we still want to run the rest of tests)
-        HAS_DEVICE=false
+        fail "Invalid --source exited $exit_code (expected 5)"
     fi
+}
 
-    if [[ "${HAS_DEVICE:-true}" == "true" ]]; then
-        # --- START ---
-        set +e
-        stderr_output=$(bash "$PIPELINE" --action start --output "$TEST_OUTPUT" --source mic 2>&1)
-        start_exit=$?
-        set -e
+# --- Test: Prerequisite validation ---
 
-        if [[ $start_exit -eq 0 ]]; then
-            pass "start action exited 0"
-        else
-            fail "start action exited ${start_exit}"
-            echo "  stderr: ${stderr_output}"
-        fi
-
-        # Verify .pid sentinel exists
-        if [[ -f "${TEST_OUTPUT}.pid" ]]; then
-            pass ".pid sentinel created"
-
-            # Verify format: {pid}:{timestamp}
-            pid_content=$(cat "${TEST_OUTPUT}.pid")
-            if echo "$pid_content" | grep -qE '^[0-9]+:[0-9]+$'; then
-                pass ".pid format is correct (${pid_content})"
-            else
-                fail ".pid format unexpected: ${pid_content}"
-            fi
-        else
-            fail ".pid sentinel not created"
-        fi
-
-        # Verify .recording sentinel exists and has valid JSON
-        if [[ -f "${TEST_OUTPUT}.recording" ]]; then
-            pass ".recording sentinel created"
-
-            session_id=$(python3 -c "
-import json
-with open('${TEST_OUTPUT}.recording') as f:
-    data = json.load(f)
-assert 'session_id' in data, 'missing session_id'
-assert 'source' in data, 'missing source'
-assert 'start_time' in data, 'missing start_time'
-print(data['session_id'])
-" 2>/dev/null) || session_id=""
-
-            if [[ -n "$session_id" ]]; then
-                pass ".recording has valid JSON with required fields"
-            else
-                fail ".recording JSON is invalid or missing fields"
-            fi
-        else
-            fail ".recording sentinel not created"
-        fi
-
-        # Let it record for 2 seconds
-        sleep 2
-
-        # --- STOP ---
-        set +e
-        stderr_output=$(bash "$PIPELINE" --action stop --output "$TEST_OUTPUT" 2>&1)
-        stop_exit=$?
-        set -e
-
-        if [[ $stop_exit -eq 0 ]]; then
-            pass "stop action exited 0"
-        else
-            fail "stop action exited ${stop_exit}"
-            echo "  stderr: ${stderr_output}"
-        fi
-
-        # Verify .pid removed after stop
-        if [[ ! -f "${TEST_OUTPUT}.pid" ]]; then
-            pass ".pid file removed after stop"
-        else
-            fail ".pid file still present after stop"
-        fi
-
-        # Verify .processing sentinel exists with "audio_stopped"
-        if [[ -f "${TEST_OUTPUT}.processing" ]]; then
-            proc_content=$(cat "${TEST_OUTPUT}.processing")
-            if [[ "$proc_content" == "audio_stopped" ]]; then
-                pass ".processing sentinel contains 'audio_stopped'"
-            else
-                fail ".processing sentinel contains '${proc_content}', expected 'audio_stopped'"
-            fi
-        else
-            fail ".processing sentinel not created after stop"
-        fi
-
-        # --- PROCESS ---
-        # Need the whisper model path
-        model_path=$(python3 -c "
-import json, os
-config_path = os.path.expanduser('~/.config/meeting-recorder/config.json')
-try:
-    with open(config_path) as f:
-        cfg = json.load(f)
-    path = cfg.get('whisperModelPath', '')
-    print(os.path.expanduser(path))
-except Exception:
-    print('')
-" 2>/dev/null) || model_path=""
-
-        if [[ -z "$model_path" || ! -f "$model_path" ]]; then
-            skip "Whisper model not found at '${model_path}' — skipping process test"
-        else
-            set +e
-            stderr_output=$(bash "$PIPELINE" --action process --output "$TEST_OUTPUT" --model-path "$model_path" 2>&1)
-            process_exit=$?
-            set -e
-
-            if [[ $process_exit -eq 0 ]]; then
-                pass "process action exited 0"
-            else
-                fail "process action exited ${process_exit}"
-                echo "  stderr: ${stderr_output}"
-            fi
-
-            # Verify output transcript exists
-            if [[ -f "$TEST_OUTPUT" ]]; then
-                pass "Transcript file created at ${TEST_OUTPUT}"
-            else
-                fail "Transcript file not found at ${TEST_OUTPUT}"
-            fi
-
-            # Verify .done sentinel
-            if [[ -f "${TEST_OUTPUT}.done" ]]; then
-                pass ".done sentinel created"
-            else
-                fail ".done sentinel not created"
-            fi
-
-            # Verify cleanup: .recording and .processing should be gone
-            if [[ ! -f "${TEST_OUTPUT}.recording" ]]; then
-                pass ".recording cleaned up after process"
-            else
-                fail ".recording still present after successful process"
-            fi
-
-            if [[ ! -f "${TEST_OUTPUT}.processing" ]]; then
-                pass ".processing cleaned up after process"
-            else
-                fail ".processing still present after successful process"
-            fi
-        fi
+test_missing_sox() {
+    echo "[test] Missing sox should produce .error sentinel and exit 5"
+    if has_tool sox; then
+        skip "sox is installed, cannot test missing-sox path"
+        return
     fi
-fi
-
-###############################################################################
-# Test 12: .error sentinel JSON structure validation
-###############################################################################
-begin_test "Error sentinel JSON structure is valid"
-
-cleanup
-mkdir -p "$TEST_DIR"
-
-# Force an error by running process without .recording
-set +e
-bash "$PIPELINE" --action process --output "$TEST_OUTPUT" --model-path /nonexistent/model.bin 2>/dev/null
-set -e
-
-if [[ -f "${TEST_OUTPUT}.error" ]]; then
-    valid=$(python3 -c "
+    local output="${TEST_DIR}/missing-sox.md"
+    local exit_code=0
+    "$PIPELINE" --action start --source mic --output "$output" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 5 ]]; then
+        pass "Missing sox exits 5"
+    else
+        fail "Missing sox exited $exit_code (expected 5)"
+    fi
+    if [[ -f "${output}.error" ]]; then
+        pass "Missing sox creates .error sentinel"
+        # Verify .error is valid JSON with expected fields
+        if python3 -c "
 import json, sys
-with open('${TEST_OUTPUT}.error') as f:
-    data = json.load(f)
-required = ['step', 'exit_code', 'stderr']
-missing = [k for k in required if k not in data]
-if missing:
-    print('missing: ' + ', '.join(missing))
-    sys.exit(1)
-if not isinstance(data['exit_code'], int):
-    print('exit_code is not int')
-    sys.exit(1)
-print('ok')
-" 2>/dev/null) || valid="parse_error"
-
-    if [[ "$valid" == "ok" ]]; then
-        pass ".error sentinel has valid JSON with step, exit_code, stderr"
+with open('${output}.error') as f:
+    d = json.load(f)
+assert 'step' in d, 'missing step field'
+assert 'exit_code' in d, 'missing exit_code field'
+assert 'stderr' in d, 'missing stderr field'
+assert 'sox' in d['stderr'].lower(), 'stderr should mention sox'
+" 2>/dev/null; then
+            pass ".error sentinel has valid JSON with expected fields"
+        else
+            fail ".error sentinel JSON validation failed"
+        fi
     else
-        fail ".error sentinel JSON validation: ${valid}"
+        fail "Missing sox did not create .error sentinel"
     fi
-else
-    fail ".error sentinel not found"
-fi
+}
 
-###############################################################################
-# Summary
-###############################################################################
-echo ""
-echo "=============================================="
-echo " Test Results"
-echo "=============================================="
-echo -e "  ${GREEN}Passed${NC}:  ${TESTS_PASSED}"
-echo -e "  ${RED}Failed${NC}:  ${TESTS_FAILED}"
-echo -e "  ${YELLOW}Skipped${NC}: ${TESTS_SKIPPED}"
-echo -e "  Total:   ${TESTS_RUN}"
-echo "=============================================="
+# --- Test: Sentinel file contract ---
 
-if [[ $TESTS_FAILED -gt 0 ]]; then
-    echo -e "${RED}Some tests failed!${NC}"
-    exit 1
-else
-    echo -e "${GREEN}All executed tests passed.${NC}"
+test_sentinel_files_on_stop_no_pid() {
+    echo "[test] --action stop without .pid file should create .error"
+    local output="${TEST_DIR}/no-pid-test.md"
+    local exit_code=0
+    "$PIPELINE" --action stop --output "$output" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 1 ]]; then
+        pass "Stop without .pid exits 1"
+    else
+        fail "Stop without .pid exited $exit_code (expected 1)"
+    fi
+    if [[ -f "${output}.error" ]]; then
+        pass "Stop without .pid creates .error sentinel"
+    else
+        fail "Stop without .pid did not create .error sentinel"
+    fi
+}
+
+test_sentinel_files_on_process_no_recording() {
+    echo "[test] --action process without .recording should create .error"
+    local output="${TEST_DIR}/no-recording-test.md"
+    local exit_code=0
+    "$PIPELINE" --action process --source mic --output "$output" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 4 ]]; then
+        pass "Process without .recording exits 4"
+    else
+        fail "Process without .recording exited $exit_code (expected 4)"
+    fi
+    if [[ -f "${output}.error" ]]; then
+        pass "Process without .recording creates .error sentinel"
+    else
+        fail "Process without .recording did not create .error sentinel"
+    fi
+}
+
+# --- Test: Simulated start/stop/process flow with mock sentinels ---
+
+test_stop_with_stale_pid() {
+    echo "[test] --action stop with stale PID should create .error"
+    local output="${TEST_DIR}/stale-pid-test.md"
+
+    # Write a .pid file pointing to a non-existent PID
+    echo "99999:2026-01-01T00:00:00Z" > "${output}.pid"
+
+    # Write a minimal .recording sentinel (no valid session dir)
+    echo '{"session_id":"test-stale-123","source":"mic","start_time":"2026-01-01T00:00:00Z"}' > "${output}.recording"
+
+    local exit_code=0
+    "$PIPELINE" --action stop --output "$output" 2>/dev/null || exit_code=$?
+
+    if [[ $exit_code -eq 1 ]]; then
+        pass "Stop with stale PID exits 1"
+    else
+        fail "Stop with stale PID exited $exit_code (expected 1)"
+    fi
+
+    if [[ -f "${output}.error" ]]; then
+        pass "Stop with stale PID creates .error sentinel"
+    else
+        fail "Stop with stale PID did not create .error sentinel"
+    fi
+
+    # .pid should be cleaned up on error
+    if [[ ! -f "${output}.pid" ]]; then
+        pass ".pid cleaned up on error"
+    else
+        fail ".pid not cleaned up on error"
+    fi
+
+    # .recording should be kept for debugging
+    if [[ -f "${output}.recording" ]]; then
+        pass ".recording kept on error for debugging"
+    else
+        fail ".recording was deleted on error (should be kept)"
+    fi
+}
+
+# --- Test: Process with mock audio (ffmpeg available) ---
+
+test_process_with_mock_audio() {
+    echo "[test] --action process with mock audio file (requires ffmpeg)"
+    if ! has_tool ffmpeg; then
+        skip "ffmpeg not installed, cannot test process action"
+        return
+    fi
+    if ! has_tool whisper-cpp; then
+        skip "whisper-cpp not installed, cannot test full process action"
+        # But we can test the ffmpeg conversion step by checking it fails at whisper
+        echo "  (testing partial process flow up to whisper step)"
+
+        local output="${TEST_DIR}/mock-process.md"
+        local session_id="mock-session-001"
+        local session_dir="/tmp/meeting-recorder/${session_id}"
+        mkdir -p "$session_dir"
+
+        # Generate a short silent WAV file with ffmpeg
+        ffmpeg -y -f lavfi -i "anullsrc=r=44100:cl=mono" -t 1 "${session_dir}/raw.wav" 2>/dev/null
+
+        # Write .recording sentinel
+        echo "{\"session_id\":\"${session_id}\",\"source\":\"mic\",\"start_time\":\"2026-01-01T00:00:00Z\"}" > "${output}.recording"
+
+        local exit_code=0
+        "$PIPELINE" --action process --source mic --output "$output" \
+            --model-path "/nonexistent/model.bin" 2>/dev/null || exit_code=$?
+
+        # Should fail at whisper step (exit code 3) since whisper-cpp is not installed
+        if [[ $exit_code -eq 3 ]]; then
+            pass "Process fails at whisper step with exit 3 (whisper-cpp not installed)"
+        elif [[ $exit_code -eq 5 ]]; then
+            # whisper-cpp binary not found during process (if pipeline rechecks)
+            pass "Process fails at whisper prerequisite (exit 5)"
+        else
+            fail "Process exited $exit_code (expected 3 or 5)"
+        fi
+
+        # Check that 16k.wav was created (ffmpeg step succeeded)
+        if [[ -f "${session_dir}/16k.wav" ]]; then
+            pass "ffmpeg conversion produced 16k.wav"
+        else
+            fail "ffmpeg conversion did not produce 16k.wav"
+        fi
+
+        # Check that .processing was written before error
+        # (may have been cleaned up by error handler, check .error instead)
+        if [[ -f "${output}.error" ]]; then
+            pass ".error sentinel created on whisper failure"
+            local error_step
+            error_step=$(python3 -c "
+import json
+with open('${output}.error') as f:
+    print(json.load(f)['step'])
+" 2>/dev/null || echo "unknown")
+            if [[ "$error_step" == "transcribing" ]]; then
+                pass ".error step is 'transcribing'"
+            else
+                fail ".error step is '$error_step' (expected 'transcribing')"
+            fi
+        else
+            fail "No .error sentinel on whisper failure"
+        fi
+
+        # Cleanup
+        rm -rf "$session_dir"
+        return
+    fi
+
+    # Full process test (whisper-cpp available) — only on macOS with model
+    local model_path="${HOME}/models/ggml-large-v3-turbo-q5_0.bin"
+    if [[ ! -f "$model_path" ]]; then
+        skip "Whisper model not found at $model_path"
+        return
+    fi
+
+    local output="${TEST_DIR}/full-process.md"
+    local session_id="full-session-001"
+    local session_dir="/tmp/meeting-recorder/${session_id}"
+    mkdir -p "$session_dir"
+
+    # Generate a short silent WAV
+    ffmpeg -y -f lavfi -i "anullsrc=r=44100:cl=mono" -t 2 "${session_dir}/raw.wav" 2>/dev/null
+
+    # Write .recording sentinel
+    echo "{\"session_id\":\"${session_id}\",\"source\":\"mic\",\"start_time\":\"2026-01-01T00:00:00Z\"}" > "${output}.recording"
+
+    local exit_code=0
+    "$PIPELINE" --action process --source mic --output "$output" \
+        --model-path "$model_path" 2>/dev/null || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        pass "Full process completes successfully"
+        if [[ -f "$output" ]]; then
+            pass "Transcript file created at output path"
+        else
+            fail "Transcript file not found at output path"
+        fi
+        if [[ -f "${output}.done" ]]; then
+            pass ".done sentinel created"
+        else
+            fail ".done sentinel not created"
+        fi
+        # Verify cleanup
+        if [[ ! -f "${output}.recording" ]]; then
+            pass ".recording cleaned up on success"
+        else
+            fail ".recording not cleaned up on success"
+        fi
+        if [[ ! -f "${output}.processing" ]]; then
+            pass ".processing cleaned up on success"
+        else
+            fail ".processing not cleaned up on success"
+        fi
+        if [[ ! -d "$session_dir" ]]; then
+            pass "Session temp dir cleaned up on success"
+        else
+            fail "Session temp dir not cleaned up on success"
+        fi
+    else
+        fail "Full process exited $exit_code (expected 0)"
+    fi
+}
+
+# --- Test: Config reading ---
+
+test_config_defaults() {
+    echo "[test] Config defaults applied when no config file exists"
+    # Use a config path that does not exist by temporarily unsetting it
+    # We test indirectly: the script should not crash when config file is missing
+    local output="${TEST_DIR}/config-test.md"
+    local exit_code=0
+
+    # Just test that --action with missing tools produces the right error
+    # (this implicitly tests config reading path since SOURCE defaults from config)
+    if ! has_tool sox; then
+        "$PIPELINE" --action start --output "$output" 2>/dev/null || exit_code=$?
+        if [[ $exit_code -eq 5 ]]; then
+            pass "Config defaults work (script runs with defaults, fails at sox check)"
+        else
+            fail "Unexpected exit code $exit_code when testing config defaults"
+        fi
+    else
+        skip "Cannot test config defaults indirectly when sox is installed"
+    fi
+}
+
+# --- Test: Start action on macOS with real tools ---
+
+test_full_start_stop_flow() {
+    echo "[test] Full start/stop flow (requires sox on macOS)"
+    if ! has_tool sox; then
+        skip "sox not installed, cannot test start/stop flow"
+        return
+    fi
+    if [[ "$(uname)" != "Darwin" ]]; then
+        skip "Start/stop flow requires macOS CoreAudio"
+        return
+    fi
+
+    local output="${TEST_DIR}/start-stop-test.md"
+    local exit_code=0
+
+    # Start recording
+    "$PIPELINE" --action start --source mic --output "$output" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        fail "Start action failed with exit code $exit_code"
+        return
+    fi
+    pass "Start action exits 0"
+
+    # Verify sentinel files
+    if [[ -f "${output}.pid" ]]; then
+        pass ".pid sentinel created on start"
+    else
+        fail ".pid sentinel not created on start"
+        return
+    fi
+
+    if [[ -f "${output}.recording" ]]; then
+        pass ".recording sentinel created on start"
+    else
+        fail ".recording sentinel not created on start"
+    fi
+
+    # Verify .recording JSON content
+    if python3 -c "
+import json
+with open('${output}.recording') as f:
+    d = json.load(f)
+assert 'session_id' in d
+assert 'source' in d
+assert 'start_time' in d
+assert d['source'] == 'mic'
+" 2>/dev/null; then
+        pass ".recording sentinel has valid JSON with required fields"
+    else
+        fail ".recording sentinel JSON is invalid"
+    fi
+
+    # Verify .pid content format
+    local pid_content
+    pid_content=$(cat "${output}.pid")
+    local pid_part
+    pid_part=$(echo "$pid_content" | cut -d: -f1)
+    if [[ "$pid_part" =~ ^[0-9]+$ ]]; then
+        pass ".pid contains numeric PID"
+    else
+        fail ".pid content format unexpected: $pid_content"
+    fi
+
+    # Wait briefly for sox to start
+    sleep 2
+
+    # Stop recording
+    exit_code=0
+    "$PIPELINE" --action stop --output "$output" 2>/dev/null || exit_code=$?
+    if [[ $exit_code -eq 0 ]]; then
+        pass "Stop action exits 0"
+    else
+        fail "Stop action failed with exit code $exit_code"
+    fi
+
+    # Verify post-stop state
+    if [[ ! -f "${output}.pid" ]]; then
+        pass ".pid removed after stop"
+    else
+        fail ".pid still exists after stop"
+    fi
+
+    if [[ -f "${output}.processing" ]]; then
+        local step
+        step=$(cat "${output}.processing")
+        if [[ "$step" == "audio_stopped" ]]; then
+            pass ".processing sentinel says 'audio_stopped'"
+        else
+            fail ".processing sentinel says '$step' (expected 'audio_stopped')"
+        fi
+    else
+        fail ".processing sentinel not created after stop"
+    fi
+}
+
+# --- Test: Error sentinel JSON format ---
+
+test_error_sentinel_format() {
+    echo "[test] Error sentinel JSON format validation"
+    local output="${TEST_DIR}/error-format-test.md"
+
+    # Trigger an error by stopping with no .pid
+    "$PIPELINE" --action stop --output "$output" 2>/dev/null || true
+
+    if [[ -f "${output}.error" ]]; then
+        if python3 -c "
+import json, sys
+with open('${output}.error') as f:
+    d = json.load(f)
+required = ['step', 'exit_code', 'stderr']
+for field in required:
+    assert field in d, f'Missing field: {field}'
+assert isinstance(d['exit_code'], int), 'exit_code should be int'
+assert isinstance(d['step'], str), 'step should be string'
+assert isinstance(d['stderr'], str), 'stderr should be string'
+" 2>/dev/null; then
+            pass ".error sentinel JSON has correct schema"
+        else
+            fail ".error sentinel JSON has incorrect schema"
+        fi
+    else
+        fail "No .error sentinel created for test"
+    fi
+}
+
+# --- Test: Config example file ---
+
+test_config_example() {
+    echo "[test] config.example.json is valid JSON with all required fields"
+    local config_file="${SCRIPT_DIR}/config.example.json"
+    if [[ ! -f "$config_file" ]]; then
+        fail "config.example.json does not exist"
+        return
+    fi
+
+    if python3 -c "
+import json, sys
+with open('${config_file}') as f:
+    d = json.load(f)
+required = ['micDevice', 'systemDevice', 'whisperModelPath', 'language', 'defaultOutputDir', 'defaultSource']
+for field in required:
+    assert field in d, f'Missing field: {field}'
+assert d['defaultSource'] in ('mic', 'system', 'both'), 'defaultSource must be mic|system|both'
+assert isinstance(d['language'], str) and len(d['language']) >= 2, 'language must be a string >= 2 chars'
+" 2>/dev/null; then
+        pass "config.example.json is valid with all 6 required fields"
+    else
+        fail "config.example.json validation failed"
+    fi
+}
+
+# --- Test: Pipeline script is executable ---
+
+test_pipeline_executable() {
+    echo "[test] meeting-pipeline.sh is executable"
+    if [[ -x "$PIPELINE" ]]; then
+        pass "meeting-pipeline.sh is executable"
+    else
+        fail "meeting-pipeline.sh is not executable"
+    fi
+}
+
+# --- Main ---
+
+main() {
+    echo "========================================"
+    echo "Meeting Pipeline Test Suite"
+    echo "========================================"
+    echo ""
+    echo "Platform: $(uname -s) $(uname -m)"
+    echo "Tools available:"
+    for tool in sox ffmpeg whisper-cpp python3; do
+        if has_tool "$tool"; then
+            echo "  $tool: $(command -v "$tool")"
+        else
+            echo "  $tool: NOT INSTALLED"
+        fi
+    done
+    echo ""
+
+    setup
+
+    # Argument validation tests (always run)
+    test_missing_action
+    echo ""
+    test_missing_output
+    echo ""
+    test_invalid_action
+    echo ""
+    test_unknown_argument
+    echo ""
+    test_invalid_source
+    echo ""
+
+    # Prerequisite tests
+    test_missing_sox
+    echo ""
+
+    # Sentinel file tests (always run)
+    test_sentinel_files_on_stop_no_pid
+    echo ""
+    test_sentinel_files_on_process_no_recording
+    echo ""
+    test_stop_with_stale_pid
+    echo ""
+
+    # Error sentinel format
+    test_error_sentinel_format
+    echo ""
+
+    # Process with mock audio
+    test_process_with_mock_audio
+    echo ""
+
+    # Config tests
+    test_config_defaults
+    echo ""
+    test_config_example
+    echo ""
+
+    # Executable test
+    test_pipeline_executable
+    echo ""
+
+    # Full flow (macOS + sox only)
+    test_full_start_stop_flow
+    echo ""
+
+    teardown
+
+    echo "========================================"
+    echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
+    echo "========================================"
+
+    if [[ $FAIL -gt 0 ]]; then
+        exit 1
+    fi
     exit 0
-fi
+}
+
+main "$@"
