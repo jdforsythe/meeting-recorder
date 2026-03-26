@@ -1,0 +1,8 @@
+{
+  "micDevice": "MacBook Pro Microphone",
+  "systemDevice": "BlackHole 2ch",
+  "whisperModelPath": "~/models/ggml-large-v3-turbo-q5_0.bin",
+  "language": "en",
+  "defaultOutputDir": "~/Documents/meeting-transcripts/",
+  "defaultSource": "mic"
+}

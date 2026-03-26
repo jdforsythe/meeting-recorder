@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "meeting-recorder": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["mcp/meeting_recorder_mcp.py"]
+    }
+  }
+}
