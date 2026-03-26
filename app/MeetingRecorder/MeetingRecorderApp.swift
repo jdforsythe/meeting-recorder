@@ -17,8 +17,8 @@ struct MeetingRecorderApp: App {
                 Image(systemName: "record.circle.fill")
                     .symbolRenderingMode(.multicolor)
                     .symbolEffect(.pulse)
-            case .processing(_):
-                BrickAnimationMenuBarIcon()
+            case .processing(let step):
+                BrickAnimationMenuBarIcon(tooltip: step.isEmpty ? "Processing audio..." : step)
             case .error(_):
                 Image(systemName: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)

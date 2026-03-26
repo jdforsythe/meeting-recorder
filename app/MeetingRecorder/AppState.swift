@@ -51,6 +51,7 @@ class AppState: ObservableObject {
     private var configManager: ConfigManager
     private var cancellables = Set<AnyCancellable>()
     private var sentinelTimer: AnyCancellable?
+    private var elapsedTimeTimer: AnyCancellable?
 
     struct LastRecordingInfo {
         let outputPath: String
@@ -96,6 +97,8 @@ class AppState: ObservableObject {
                 self.state = .recording
                 self.currentOutputPath = output
                 self.recordingStartTime = Date()
+                self.startElapsedTimeTimer()
+                NotificationManager.shared.sendRecordingStarted()
             } catch {
                 self.handleError(message: "Failed to start recording: \(error.localizedDescription)")
             }
@@ -111,6 +114,8 @@ class AppState: ObservableObject {
 
         let source = selectedSource.rawValue
 
+        elapsedTimeTimer?.cancel()
+        elapsedTimeTimer = nil
         state = .processing(step: "audio_stopped")
 
         Task { [weak self] in
@@ -140,6 +145,8 @@ class AppState: ObservableObject {
     func handleProcessingComplete() {
         sentinelTimer?.cancel()
         sentinelTimer = nil
+        elapsedTimeTimer?.cancel()
+        elapsedTimeTimer = nil
 
         let duration: TimeInterval? = {
             guard let start = recordingStartTime else { return nil }
@@ -152,6 +159,8 @@ class AppState: ObservableObject {
                 timestamp: Date(),
                 duration: duration
             )
+            let filename = (output as NSString).lastPathComponent
+            NotificationManager.shared.sendTranscriptReady(filename: filename)
         }
 
         state = .idle
@@ -162,7 +171,10 @@ class AppState: ObservableObject {
     func handleError(message: String) {
         sentinelTimer?.cancel()
         sentinelTimer = nil
+        elapsedTimeTimer?.cancel()
+        elapsedTimeTimer = nil
 
+        NotificationManager.shared.sendError(message: message)
         state = .error(message: message)
 
         // Auto-recover to idle after 5 seconds.
@@ -211,6 +223,22 @@ class AppState: ObservableObject {
         default:
             break
         }
+    }
+
+    // MARK: - Elapsed Time Timer
+
+    /// Publishes every second to drive the elapsed time display in the UI.
+    private func startElapsedTimeTimer() {
+        elapsedTimeTimer?.cancel()
+        elapsedTimeTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                // Trigger a SwiftUI redraw by nudging objectWillChange.
+                // The computed `elapsedTime` property reads `recordingStartTime`
+                // which doesn't change, but `objectWillChange` forces the view
+                // to re-evaluate the computed property.
+                self?.objectWillChange.send()
+            }
     }
 
     // MARK: - Sentinel File Polling
@@ -272,10 +300,11 @@ class AppState: ObservableObject {
             try? fm.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
         }
 
+        // Match MCP server format: {timestamp}-meeting.md
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        formatter.dateFormat = "yyyy-MM-dd'T'HH-mm"
         let timestamp = formatter.string(from: Date())
 
-        return (outputDir as NSString).appendingPathComponent("meeting_\(timestamp).md")
+        return (outputDir as NSString).appendingPathComponent("\(timestamp)-meeting.md")
     }
 }

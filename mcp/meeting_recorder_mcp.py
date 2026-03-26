@@ -4,7 +4,9 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
+from urllib.parse import quote
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -13,6 +15,7 @@ mcp = FastMCP("MeetingRecorder")
 
 SESSION_REGISTRY = os.path.expanduser("~/.config/meeting-recorder/current-session.json")
 PIPELINE_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "pipeline", "meeting-pipeline.sh")
+APP_BUNDLE_ID = "com.meetingrecorder.app"
 
 _CONFIG_PATH = os.path.expanduser("~/.config/meeting-recorder/config.json")
 _CONFIG_DEFAULTS: dict = {
@@ -35,6 +38,28 @@ def _read_config() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     return config
+
+
+def _is_app_installed() -> bool:
+    """Check if MeetingRecorder.app is installed and launchable."""
+    if not shutil.which("open"):
+        return False
+    try:
+        result = subprocess.run(
+            ["open", "-Ra", "MeetingRecorder"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _launch_app(source: str, output_path: str) -> None:
+    """Launch the SwiftUI app via its URL scheme."""
+    encoded_output = quote(output_path, safe="")
+    url = f"meetingrecorder://start?source={source}&output={encoded_output}"
+    subprocess.Popen(["open", url])
 
 
 def _sanitize_filename(name: str) -> str:
@@ -77,15 +102,19 @@ def start_recording(
     model_path = os.path.expanduser(config.get("whisperModelPath", _CONFIG_DEFAULTS["whisperModelPath"]))
     language = config.get("language", _CONFIG_DEFAULTS["language"])
 
-    # 5. Launch pipeline
-    subprocess.Popen([
-        PIPELINE_SCRIPT,
-        "--source", source,
-        "--output", output_path,
-        "--model-path", model_path,
-        "--language", language,
-        "--action", "start",
-    ])
+    # 5. Launch recording — prefer SwiftUI app (handles full lifecycle
+    #    including stop, process, and notifications), fall back to pipeline.
+    if _is_app_installed():
+        _launch_app(source, output_path)
+    else:
+        subprocess.Popen([
+            PIPELINE_SCRIPT,
+            "--source", source,
+            "--output", output_path,
+            "--model-path", model_path,
+            "--language", language,
+            "--action", "start",
+        ])
 
     # 6. Write session registry
     os.makedirs(os.path.dirname(SESSION_REGISTRY), exist_ok=True)

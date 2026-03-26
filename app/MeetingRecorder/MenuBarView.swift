@@ -168,8 +168,7 @@ struct MenuBarView: View {
     // MARK: - Actions
 
     private func startRecording() {
-        let output = appState.currentOutputPath ?? defaultOutputPath()
-        appState.startRecording(source: appState.selectedSource, outputPath: output)
+        appState.startRecording(source: appState.selectedSource, outputPath: nil)
     }
 
     private func stopRecording() {
@@ -180,14 +179,6 @@ struct MenuBarView: View {
 
     private var sourceDisplayName: String {
         appState.selectedSource.displayName
-    }
-
-    private func defaultOutputPath() -> String {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH-mm"
-        let timestamp = dateFormatter.string(from: Date())
-        let dir = NSString("~/Documents/meeting-transcripts").expandingTildeInPath
-        return "\(dir)/\(timestamp)-meeting.md"
     }
 
     static func formatDuration(_ interval: TimeInterval) -> String {

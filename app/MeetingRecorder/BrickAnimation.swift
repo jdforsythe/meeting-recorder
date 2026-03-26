@@ -216,9 +216,11 @@ class BrickAnimator: ObservableObject {
 /// Used by `MeetingRecorderApp` in the `.processing` state.
 struct BrickAnimationMenuBarIcon: View {
     @StateObject private var animator = BrickAnimator()
+    var tooltip: String = "Processing audio..."
 
     var body: some View {
         Image(nsImage: animator.currentFrame)
+            .help(tooltip)
             .onAppear {
                 animator.start()
             }

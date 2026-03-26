@@ -21,6 +21,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Request notification permission on first launch.
+        NotificationManager.shared.requestAuthorization()
+
         // Register as the handler for our URL scheme in case the system
         // needs an explicit nudge (normally handled by Info.plist).
         NSAppleEventManager.shared().setEventHandler(

@@ -131,30 +131,30 @@ class PreflightChecker {
     /// Verify that the system has an audio input device appropriate for the
     /// requested source.
     ///
-    /// For `.mic` and `.both` we check that at least one audio capture device
-    /// is discovered. System audio (BlackHole) presence is harder to verify
-    /// programmatically so we only flag it as unavailable when the discovery
-    /// session returns zero devices.
+    /// For `.mic` we check that at least one audio capture device is available.
+    /// For `.system` we verify that "BlackHole 2ch" (or the configured system
+    /// device) is present. For `.both` we check both conditions.
     private static func checkAudioDevice(source: AudioSource) -> Bool {
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone],
+            mediaType: .audio,
+            position: .unspecified
+        )
+        let deviceNames = session.devices.map { $0.localizedName }
+
         switch source {
-        case .mic, .both:
-            // AVCaptureDevice.DiscoverySession is available on macOS 14+.
-            let session = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.microphone],
-                mediaType: .audio,
-                position: .unspecified
-            )
+        case .mic:
             return !session.devices.isEmpty
 
         case .system:
-            // System audio capture (e.g. BlackHole) appears as a regular
-            // audio device. If no audio devices exist at all, flag it.
-            let session = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.microphone],
-                mediaType: .audio,
-                position: .unspecified
-            )
-            return !session.devices.isEmpty
+            let systemDevice = ConfigManager().config.systemDevice
+            return deviceNames.contains(where: { $0.contains(systemDevice) })
+
+        case .both:
+            let hasMic = !session.devices.isEmpty
+            let systemDevice = ConfigManager().config.systemDevice
+            let hasSystem = deviceNames.contains(where: { $0.contains(systemDevice) })
+            return hasMic && hasSystem
         }
     }
 
