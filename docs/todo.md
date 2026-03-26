@@ -88,7 +88,7 @@ All agents use `isolation: "worktree"`. File ownership is completely disjoint �
 - [x] Fix any inconsistencies (8 found and fixed)
 
 ### Agent 7 (Optional): README
-- [ ] Project overview, architecture, prerequisites, installation, usage, file structure
+- [x] Project overview, architecture, prerequisites, installation, usage, file structure
 
 ---
 
@@ -105,25 +105,18 @@ All agents use `isolation: "worktree"`. File ownership is completely disjoint �
 
 ## Remaining Gaps (from plan audit)
 
-Items specified in the original plan docs that are not yet fully implemented:
+### Critical (functional gaps) — ALL FIXED
 
-### Critical (functional gaps)
+- [x] **NotificationManager wired into AppState** — `requestAuthorization()` called on app launch. `sendRecordingStarted()`, `sendTranscriptReady()`, `sendError()` called from AppState lifecycle.
+- [x] **MCP server launches SwiftUI app** — Prefers app via `meetingrecorder://` URL scheme when installed, falls back to direct pipeline execution.
+- [x] **Elapsed time updates live** — 1-second Timer publisher drives `objectWillChange.send()` during recording state.
 
-- [ ] **NotificationManager is dead code** — `NotificationManager` class exists but is never called from `AppState`. Recording-started, transcript-ready, and error notifications are never actually sent. Need to wire `NotificationManager.shared` calls into `AppState.startRecording()`, `handleProcessingComplete()`, and `handleError()`. Also need to call `requestAuthorization()` on app launch (in `AppDelegate.applicationDidFinishLaunching`).
+### Minor (UX/polish) — MOSTLY FIXED
 
-- [ ] **MCP server does not launch SwiftUI app** — The plan's Phase 3 checklist says "Update MCP server to launch app via URL scheme instead of pipeline directly." Currently the MCP server calls the pipeline script directly via `subprocess.Popen`, bypassing the SwiftUI app entirely. The app and MCP are disconnected — using MCP tools won't trigger menu bar UI, notifications, or state machine. Need to add a code path that launches `open meetingrecorder://start?source=...&output=...` when the app is installed.
-
-- [ ] **Elapsed time display does not update live** — `MenuBarView.recordingView` shows `appState.elapsedTime` but nothing triggers SwiftUI redraws on a timer. Need a `Timer` publisher or `TimelineView` to drive periodic updates during recording state.
-
-### Minor (UX/polish)
-
-- [ ] **No hover tooltip on menu bar icon during PROCESSING** — Plan specifies: "Hover tooltip on the menu bar icon: shows the current step as a one-liner (use `.help()` modifier or NSStatusItem button toolTip)." Not implemented on `BrickAnimationMenuBarIcon`.
-
-- [ ] **PreflightChecker doesn't verify BlackHole specifically** — For `--source system`, the check just verifies *any* audio device exists, not specifically "BlackHole 2ch". For `--source both`, only mic devices are checked, not system devices separately.
-
-- [ ] **Test error paths incomplete** — Plan checklist: "Test error paths: kill sox mid-record, feed corrupt audio to ffmpeg, verify .error sentinel." Current tests cover stale PID and missing files but not these specific scenarios (requires macOS with sox/ffmpeg installed).
-
-- [ ] **Output path naming inconsistency** — Three different default filename formats across MCP server (`2026-03-25T14-30-standup.md`), AppState (`meeting_2026-03-25_143000.md`), and MenuBarView (`2026-03-25T14-30-meeting.md`). Should be unified.
+- [x] **Hover tooltip on menu bar during PROCESSING** — `.help()` modifier on `BrickAnimationMenuBarIcon` shows current step.
+- [x] **PreflightChecker verifies BlackHole specifically** — Checks for configured `systemDevice` name for `.system` and `.both` sources.
+- [x] **Output path naming unified** — All components use `{timestamp}-meeting.md` format.
+- [ ] **Test error paths incomplete** — Requires macOS with sox/ffmpeg installed — cannot be done on Linux.
 
 ### Deviations (intentional or acceptable)
 
