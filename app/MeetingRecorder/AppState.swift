@@ -118,24 +118,30 @@ class AppState: ObservableObject {
         elapsedTimeTimer = nil
         state = .processing(step: "audio_stopped")
 
-        Task { [weak self] in
+        Task.detached { [weak self] in
             guard let self else { return }
 
             do {
                 try self.pipelineRunner.stop(output: output)
             } catch {
-                self.handleError(message: "Failed to stop recording: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.handleError(message: "Failed to stop recording: \(error.localizedDescription)")
+                }
                 return
             }
 
-            // Begin polling sentinel files for progress updates.
-            self.startPolling()
+            // Begin polling sentinel files for progress updates (on the main actor).
+            await MainActor.run {
+                self.startPolling()
+            }
 
-            // Kick off the heavy processing (ffmpeg + whisper) asynchronously.
+            // Kick off the heavy processing (ffmpeg + whisper) off the main actor.
             do {
                 try self.pipelineRunner.process(source: source, output: output)
             } catch {
-                self.handleError(message: "Processing failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.handleError(message: "Processing failed: \(error.localizedDescription)")
+                }
             }
         }
     }

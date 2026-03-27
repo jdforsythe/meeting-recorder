@@ -14,7 +14,6 @@ import SwiftUI
 class BrickAnimator: ObservableObject {
     static let frameCount = 12
     static let frameSize = CGSize(width: 18, height: 18)
-    static let pixelSize = CGSize(width: 36, height: 36) // @2x
 
     @Published var currentFrameIndex: Int = 0
 
@@ -60,7 +59,6 @@ class BrickAnimator: ObservableObject {
     private static func generateFrame(index: Int) -> NSImage {
         let image = NSImage(size: frameSize, flipped: false) { rect in
             let ctx = NSGraphicsContext.current!.cgContext
-            let scale: CGFloat = 2.0 // @2x rendering into 18pt canvas
 
             // Brick dimensions in points
             let brickW: CGFloat = 5

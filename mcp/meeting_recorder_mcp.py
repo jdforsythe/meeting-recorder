@@ -90,7 +90,11 @@ def start_recording(
         os.makedirs(output_dir, exist_ok=True)
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M")
-        name_slug = _sanitize_filename(meeting_name) if meeting_name else "meeting"
+        name_slug = "meeting"
+        if meeting_name:
+            sanitized = _sanitize_filename(meeting_name)
+            if sanitized:
+                name_slug = sanitized
         output_path = os.path.join(output_dir, f"{timestamp}-{name_slug}.md")
 
     # 3. Check for existing recording

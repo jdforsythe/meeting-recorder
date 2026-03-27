@@ -118,15 +118,21 @@ generate_session_id() {
 
 get_session_dir_from_recording() {
     if [[ -f "${OUTPUT}.recording" ]]; then
-        local sid
-        sid=$(python3 -c "
+        local sid=""
+        if command -v python3 &>/dev/null; then
+            sid=$(python3 -c "
 import json, sys
 try:
     with open('${OUTPUT}.recording') as f:
         print(json.load(f)['session_id'])
 except Exception:
     sys.exit(1)
-" 2>/dev/null)
+" 2>/dev/null) || true
+        fi
+        # Fallback: extract session_id without python3 using sed
+        if [[ -z "$sid" ]]; then
+            sid=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${OUTPUT}.recording" 2>/dev/null || true)
+        fi
         if [[ -n "$sid" ]]; then
             echo "/tmp/meeting-recorder/${sid}"
             return
@@ -147,6 +153,9 @@ write_error() {
     local step="$1"
     local exit_code="$2"
     local stderr_msg="$3"
+
+    # Ensure the output directory exists so error reporting is reliable
+    mkdir -p "$(dirname "$OUTPUT")" 2>/dev/null || true
 
     # Escape special characters for JSON
     local escaped_stderr
@@ -198,7 +207,7 @@ validate_audio_device() {
     if [[ "$(uname)" == "Darwin" ]]; then
         local available_devices
         available_devices=$(sox -V6 -n -t coreaudio junk 2>&1 || true)
-        if ! echo "$available_devices" | grep -q "$device"; then
+        if ! echo "$available_devices" | grep -Fq "$device"; then
             echo "Error: Audio device '$device' not found" >&2
             write_error "device_validation" "$EXIT_VALIDATION_ERROR" "Audio device not found: $device"
             exit "$EXIT_VALIDATION_ERROR"
@@ -210,6 +219,25 @@ validate_audio_device() {
 
 # --- Action: start ---
 action_start() {
+    # 0. Guard against duplicate start — refuse if a recording is already active for this output
+    if [[ -f "${PID_FILE}" ]]; then
+        local existing_pid
+        existing_pid=$(cut -d: -f1 "${PID_FILE}")
+        if kill -0 "$existing_pid" 2>/dev/null; then
+            echo "Error: A recording is already active (PID $existing_pid). Stop it first." >&2
+            write_error "start_duplicate" "$EXIT_VALIDATION_ERROR" "Recording already active (PID file exists with live process $existing_pid)"
+            exit "$EXIT_VALIDATION_ERROR"
+        else
+            echo "Warning: Stale PID file found (PID $existing_pid not running). Cleaning up." >&2
+            rm -f "${PID_FILE}"
+        fi
+    fi
+    if [[ -f "${RECORDING_FILE}" ]]; then
+        echo "Error: A .recording sentinel already exists at ${RECORDING_FILE}. Stop the existing recording first." >&2
+        write_error "start_duplicate" "$EXIT_VALIDATION_ERROR" "Recording sentinel already exists"
+        exit "$EXIT_VALIDATION_ERROR"
+    fi
+
     # 1. Validate prerequisites
     check_binary sox
     check_binary ffmpeg
@@ -323,21 +351,16 @@ action_stop() {
     pid_content=$(cat "${PID_FILE}")
 
     # Determine if this is a dual-PID (both) or single-PID recording
-    # by reading the source from the .recording sentinel
-    local recording_source=""
-    if [[ -f "${RECORDING_FILE}" ]]; then
-        recording_source=$(python3 -c "
-import json, sys
-try:
-    with open('${RECORDING_FILE}') as f:
-        print(json.load(f).get('source', ''))
-except Exception:
-    print('')
-" 2>/dev/null || echo "")
-    fi
-
+    # by inspecting the PID file content directly. Dual-PID format is
+    # "mic_pid:sys_pid:timestamp" (two leading numeric fields), while
+    # single-PID format is "pid:timestamp" (one leading numeric field).
+    # This is more reliable than depending on the .recording sentinel.
     local is_both=0
-    if [[ "$recording_source" == "both" ]]; then
+    local field1 field2
+    field1=$(echo "$pid_content" | cut -d: -f1)
+    field2=$(echo "$pid_content" | cut -d: -f2)
+    if [[ "$field1" =~ ^[0-9]+$ ]] && [[ "$field2" =~ ^[0-9]+$ ]]; then
+        # Both fields are numeric — this is dual-PID mode (mic_pid:sys_pid:timestamp)
         is_both=1
     fi
 
