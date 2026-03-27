@@ -241,7 +241,7 @@ action_start() {
     # 1. Validate prerequisites
     check_binary sox
     check_binary ffmpeg
-    check_binary whisper-cpp
+    check_binary whisper-cli
 
     # 2. Validate audio devices
     case "$SOURCE" in
@@ -518,12 +518,12 @@ action_process() {
         fi
     fi
 
-    # 6. Run whisper-cpp
+    # 6. Run whisper-cli
     local transcript_base="${session_dir}/transcript"
     local whisper_stderr
     whisper_stderr=$(mktemp)
 
-    if ! whisper-cpp \
+    if ! whisper-cli \
         -l "$LANGUAGE" \
         -m "$MODEL_PATH" \
         --output-txt \

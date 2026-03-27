@@ -1,2 +1,3 @@
 # Agent worktrees (temporary, auto-cleaned)
 .claude/worktrees/
+.claude/settings.local.json

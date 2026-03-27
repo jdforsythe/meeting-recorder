@@ -4,7 +4,7 @@ import AVFoundation
 /// Result of a preflight check run before recording starts.
 struct PreflightResult {
     var micPermissionGranted: Bool
-    var requiredToolsAvailable: Bool  // sox, ffmpeg, whisper-cpp
+    var requiredToolsAvailable: Bool  // sox, ffmpeg, whisper-cli
     var audioDeviceAvailable: Bool
     var diskSpaceSufficient: Bool     // > 500 MB free
     var missingTools: [String]
@@ -19,7 +19,7 @@ struct PreflightResult {
 class PreflightChecker {
 
     /// Required command-line tools that must be reachable via `$PATH`.
-    private static let requiredTools = ["sox", "ffmpeg", "whisper-cpp"]
+    private static let requiredTools = ["sox", "ffmpeg", "whisper-cli"]
 
     /// Minimum free disk space in bytes (500 MB).
     private static let minimumDiskSpace: Int64 = 500 * 1024 * 1024

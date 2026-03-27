@@ -129,7 +129,7 @@ class PipelineRunner {
         process.arguments = [scriptPath] + arguments
 
         // Inherit a minimal environment so that tools like sox, ffmpeg, and
-        // whisper-cpp can be found on common Homebrew / MacPorts paths.
+        // whisper-cli can be found on common Homebrew / MacPorts paths.
         var env = ProcessInfo.processInfo.environment
         let extraPaths = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
         if let existing = env["PATH"] {

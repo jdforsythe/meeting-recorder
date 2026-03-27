@@ -136,6 +136,16 @@ sleep 10
 cat /tmp/test-both.md
 ```
 
+---
+
+**ATTENTION**
+
+TESTED WORKING THROUGH HERE
+
+**ATTENTION**
+
+---
+
 **Expected:** Transcript capturing both mic and system audio.
 
 ### Test 1E: Error path — kill sox mid-record

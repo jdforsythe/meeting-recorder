@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # test-pipeline.sh — End-to-end tests for meeting-pipeline.sh
-# Handles missing macOS-specific tools (sox, whisper-cpp) gracefully on Linux.
+# Handles missing macOS-specific tools (sox, whisper-cli) gracefully on Linux.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE="${SCRIPT_DIR}/meeting-pipeline.sh"
@@ -228,8 +228,8 @@ test_process_with_mock_audio() {
         skip "ffmpeg not installed, cannot test process action"
         return
     fi
-    if ! has_tool whisper-cpp; then
-        skip "whisper-cpp not installed, cannot test full process action"
+    if ! has_tool whisper-cli; then
+        skip "whisper-cli not installed, cannot test full process action"
         # But we can test the ffmpeg conversion step by checking it fails at whisper
         echo "  (testing partial process flow up to whisper step)"
 
@@ -248,11 +248,11 @@ test_process_with_mock_audio() {
         "$PIPELINE" --action process --source mic --output "$output" \
             --model-path "/nonexistent/model.bin" 2>/dev/null || exit_code=$?
 
-        # Should fail at whisper step (exit code 3) since whisper-cpp is not installed
+        # Should fail at whisper step (exit code 3) since whisper-cli is not installed
         if [[ $exit_code -eq 3 ]]; then
-            pass "Process fails at whisper step with exit 3 (whisper-cpp not installed)"
+            pass "Process fails at whisper step with exit 3 (whisper-cli not installed)"
         elif [[ $exit_code -eq 5 ]]; then
-            # whisper-cpp binary not found during process (if pipeline rechecks)
+            # whisper-cli binary not found during process (if pipeline rechecks)
             pass "Process fails at whisper prerequisite (exit 5)"
         else
             fail "Process exited $exit_code (expected 3 or 5)"
@@ -539,7 +539,7 @@ main() {
     echo ""
     echo "Platform: $(uname -s) $(uname -m)"
     echo "Tools available:"
-    for tool in sox ffmpeg whisper-cpp python3; do
+    for tool in sox ffmpeg whisper-cli python3; do
         if has_tool "$tool"; then
             echo "  $tool: $(command -v "$tool")"
         else
